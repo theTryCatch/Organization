@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.28307.1972
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrgUtils", "OrgUtils\OrgUtils.csproj", "{9A78456D-1F44-4FF1-9150-CDB6B4574BCA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9A78456D-1F44-4FF1-9150-CDB6B4574BCA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9A78456D-1F44-4FF1-9150-CDB6B4574BCA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9A78456D-1F44-4FF1-9150-CDB6B4574BCA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9A78456D-1F44-4FF1-9150-CDB6B4574BCA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {F269B517-4AFF-4837-919B-6040191024D3}
+	EndGlobalSection
+EndGlobal
