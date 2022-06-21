@@ -1,15 +1,16 @@
 ﻿using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Runtime.Serialization.Formatters.Binary;
+using System.Threading;
 using System.Threading.Tasks;
 using MSFT = System.Management.Automation;
 namespace Organization.PowerSharp
 {
-    public delegate PSExecutionResult AsyncMethodCaller();
     public class PSCode
     {
         #region Public properties
@@ -19,7 +20,7 @@ namespace Organization.PowerSharp
         public Dictionary<string, object> Parameters { get; }
         public List<FileInfo> ModulesTobeImported { get; }
         #endregion
-        AsyncMethodCaller asyncMethodCaller;
+
         #region Constructor
         public PSCode(string computername, string code, CodeType codeType, Hashtable parameters, List<FileInfo> modulesTobeImported)
         {
@@ -32,7 +33,7 @@ namespace Organization.PowerSharp
         #endregion
 
         #region Public methods
-        public PSExecutionResult InvokeSync()
+        public PSExecutionResult Invoke()
         {
             PSExecutionResult psExecutionResult;
             try
@@ -76,17 +77,13 @@ namespace Organization.PowerSharp
             }
             return psExecutionResult;
         }
-        public IAsyncResult InvokeAsync()
+        public async Task<PSExecutionResult> InvokeAsync()
         {
-            asyncMethodCaller = new AsyncMethodCaller(this.InvokeSync);
-            return asyncMethodCaller.BeginInvoke(null, null);
-        }
-        public PSExecutionResult EndInvoke(IAsyncResult asyncResult)
-        {
-            return asyncMethodCaller.EndInvoke(asyncResult);
+            return await Task.Run(new Func<PSExecutionResult>(this.Invoke));
         }
         #endregion
     }
+
     public class PSRuntimeEnvironment : IDisposable
     {
         #region Public properties
@@ -136,6 +133,7 @@ namespace Organization.PowerSharp
             {
                 WSManConnectionInfo conInfo = NewWSManConnection(this.ComputerName, openTimeoutInMilliseconds);
                 var rrsp = RunspaceFactory.CreateRunspace(conInfo);
+                rrsp.InitialSessionState.Formats.Clear();
                 return rrsp;
             }
         }
@@ -174,6 +172,7 @@ namespace Organization.PowerSharp
         }
         #endregion
     }
+
     [Serializable]
     public class PSExecutionResult : ICloneable
     {
@@ -229,24 +228,56 @@ namespace Organization.PowerSharp
         #endregion
 
         #region Public methods
-        public List<IAsyncResult> BeginInvoke()
+        public IEnumerable<PSExecutionResult> BeginInvoke()
         {
-            List<IAsyncResult> handlers = new List<IAsyncResult>();
+            CancellationTokenSource cts = new CancellationTokenSource();
+            cts.CancelAfter(TimeSpan.FromSeconds(2));
+            CancellationToken ctsToken = cts.Token;
+
+            ParallelOptions po = new ParallelOptions();
+            po.CancellationToken = ctsToken;
+            po.MaxDegreeOfParallelism = Environment.ProcessorCount;
+
+            ConcurrentBag<PSExecutionResult> psExecutionResults = new ConcurrentBag<PSExecutionResult>();
+            try
+            {
+                Parallel.ForEach<PSCode>(CreatePSCodeObjectsList(), po, psCode =>
+                  {
+                      po.CancellationToken.ThrowIfCancellationRequested();
+                      Thread.Sleep(5*1000);
+                      //psExecutionResults.Add(psCode.Invoke());
+                      Console.WriteLine("in the parallel loop");
+                  });
+            }
+            catch (OperationCanceledException e)
+            {
+                Console.WriteLine(e.Message);
+            }
+            finally
+            {
+                cts.Dispose();
+            }
+            return psExecutionResults;
+        }
+
+        private IEnumerable<PSCode> CreatePSCodeObjectsList()
+        {
             foreach (var computer in ComputerNames)
             {
-                var obj = new PSCode(computer, this.Code, this.CodeType, this.parmeters, this.ModulesTobeImported);
-                handlers.Add(obj.InvokeAsync());
+                yield return (new PSCode(computer, this.Code, this.CodeType, this.parmeters, this.ModulesTobeImported));
             }
-            return handlers;
         }
         #endregion
     }
+
     public class Program
     {
         public static void Main()
         {
-            var ps = new PowerSharp.PowerShell(new List<string>() { "mslaptop", "dc1" }, "get-service; sleep 10", CodeType.Script, null, null);
-            var ans = ps.BeginInvoke();
+            var ps = new PowerSharp.PowerShell(new List<string>() { "mslaptop" }, "get-service; sleep 10", CodeType.Script, null, null);
+            var b = ps.BeginInvoke();
+            Console.WriteLine("All done");
+            Console.ReadKey();
         }
     }
 }
