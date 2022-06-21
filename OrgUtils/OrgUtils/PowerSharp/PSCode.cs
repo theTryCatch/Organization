@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Runtime.Serialization.Formatters.Binary;
@@ -210,18 +211,19 @@ namespace Organization.PowerSharp
         public CodeType CodeType { get; }
         public Dictionary<string, object> Parameters { get; }
         public List<FileInfo> ModulesTobeImported { get; }
-
+        public int TimeoutInSeconds { get; }
         private Hashtable parmeters;
         #endregion
 
         #region Constructor
-        public PowerShell(List<string> computernames, string code, CodeType codeType, Hashtable parameters, List<FileInfo> modulesTobeImported)
+        public PowerShell(List<string> computernames, string code, CodeType codeType, Hashtable parameters, List<FileInfo> modulesTobeImported, int timeoutInSeconds = 30)
         {
             this.ComputerNames = computernames;
             this.Code = code;
             this.CodeType = codeType;
             this.Parameters = parameters != null ? CSharpConverters.HashtableToDictionary<string, object>(parameters) : null;
             this.ModulesTobeImported = modulesTobeImported;
+            this.TimeoutInSeconds = timeoutInSeconds;
 
             this.parmeters = parameters;
         }
@@ -230,33 +232,44 @@ namespace Organization.PowerSharp
         #region Public methods
         public IEnumerable<PSExecutionResult> BeginInvoke()
         {
-            CancellationTokenSource cts = new CancellationTokenSource();
-            cts.CancelAfter(TimeSpan.FromSeconds(2));
-            CancellationToken ctsToken = cts.Token;
+            ConcurrentBag<PSExecutionResult> psExecutionResults = new ConcurrentBag<PSExecutionResult>();
+
 
             ParallelOptions po = new ParallelOptions();
-            po.CancellationToken = ctsToken;
             po.MaxDegreeOfParallelism = Environment.ProcessorCount;
 
-            ConcurrentBag<PSExecutionResult> psExecutionResults = new ConcurrentBag<PSExecutionResult>();
-            try
+            Parallel.ForEach<PSCode>(CreatePSCodeObjectsList(), po, psCode =>
             {
-                Parallel.ForEach<PSCode>(CreatePSCodeObjectsList(), po, psCode =>
-                  {
-                      po.CancellationToken.ThrowIfCancellationRequested();
-                      Thread.Sleep(5*1000);
-                      //psExecutionResults.Add(psCode.Invoke());
-                      Console.WriteLine("in the parallel loop");
-                  });
-            }
-            catch (OperationCanceledException e)
-            {
-                Console.WriteLine(e.Message);
-            }
-            finally
-            {
-                cts.Dispose();
-            }
+                var cts = new CancellationTokenSource();
+                var ctsToken = cts.Token;
+                Task task = Task.Factory.StartNew(() =>
+                {
+                    psExecutionResults.Add(psCode.Invoke());
+                });
+                var cancelTimer = new Timer(state =>
+                {
+                    psExecutionResults.Add(new PSExecutionResult()
+                    {
+                        ComputerName = psCode.ComputerName,
+                        HadErrors = true,
+                        Errors = new PSDataCollection<ErrorRecord>() {
+                            new ErrorRecord(
+                                new Exception($"Execution timeout with in {this.TimeoutInSeconds} second(s)"),
+                                string.Empty, ErrorCategory.OperationTimeout, null)
+                        },
+                        Results = null
+                    });
+                    cts.Cancel();
+                }
+                , null, this.TimeoutInSeconds * 1000, -1);
+                task.ContinueWith(t =>
+                {
+                    cancelTimer.Dispose();
+                    cts.Dispose();
+                });
+                var winner = Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(this.TimeoutInSeconds)));
+                winner.Wait();
+            });
             return psExecutionResults;
         }
 
@@ -272,9 +285,9 @@ namespace Organization.PowerSharp
 
     public class Program
     {
-        public static void Main()
+        static void Main(string[] args)
         {
-            var ps = new PowerSharp.PowerShell(new List<string>() { "mslaptop" }, "get-service; sleep 10", CodeType.Script, null, null);
+            var ps = new PowerSharp.PowerShell(new List<string>() { "mslaptop", "dc1" }, "get-service", CodeType.Script, null, null, 1);
             var b = ps.BeginInvoke();
             Console.WriteLine("All done");
             Console.ReadKey();
