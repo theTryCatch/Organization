@@ -2,6 +2,8 @@
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.IO;
 using System.Linq;
 using System.Management.Automation;
@@ -20,55 +22,106 @@ namespace Organization.PowerSharp
         public CodeType CodeType { get; }
         public Dictionary<string, object> Parameters { get; }
         public List<FileInfo> ModulesTobeImported { get; }
+        public uint TimeoutInSeconds { get; }
         #endregion
 
         #region Constructor
-        public PSCode(string computername, string code, CodeType codeType, Hashtable parameters, List<FileInfo> modulesTobeImported)
+        public PSCode(string computername, string code, CodeType codeType, Hashtable parameters, List<FileInfo> modulesTobeImported, uint timeoutInSeconds)
         {
             this.ComputerName = computername;
             this.Code = code;
             this.CodeType = codeType;
             this.Parameters = parameters != null ? CSharpConverters.HashtableToDictionary<string, object>(parameters) : null;
             this.ModulesTobeImported = modulesTobeImported;
+            this.TimeoutInSeconds = timeoutInSeconds;
         }
         #endregion
 
         #region Public methods
         public PSExecutionResult Invoke()
         {
-            PSExecutionResult psExecutionResult;
+            CancellationTokenSource cts = new CancellationTokenSource();
+            Task<PSExecutionResult> task = null;
             try
             {
-                using (var psRuntimeEnvironment = new PSRuntimeEnvironment(this))
+                Func<PSExecutionResult> func = new Func<PSExecutionResult>(IgnitePowerShellInvocation);
+                cts.CancelAfter(TimeSpan.FromSeconds(TimeoutInSeconds));
+                task = Task.Run(func, cts.Token);
+                task.Wait(cts.Token);
+                return task.Result;
+            }
+            catch (OperationCanceledException)
+            {
+                return new PSExecutionResult()
                 {
-                    PSExecutionResult psExecutionResult_temp = new PSExecutionResult()
-                    {
-                        ComputerName = this.ComputerName,
-                        HadErrors = false,
-                        Results = null,
-                        Errors = null
-                    };
-                    var result = psRuntimeEnvironment.PowerShell.Invoke();
-
-                    //If the executed code is just a command then the PowerShell.Invoke() method throws an exception but
-                    //if the code is a script and contains any errors then it will not indicate anyway about the exceptions.
-                    //Hence we the logic is around HadErrors property data.
-                    if (psRuntimeEnvironment.PowerShell.HadErrors)
-                    {
-                        psExecutionResult_temp.HadErrors = true;
-                        psExecutionResult_temp.Errors = psRuntimeEnvironment.PowerShell.Streams.Error;
-                        psExecutionResult_temp.Results = null;
-                    }
-                    else
-                    {
-                        psExecutionResult_temp.Results = result;
-                    }
-                    psExecutionResult = (PSExecutionResult)psExecutionResult_temp.Clone(); //Deep cloning
-                }
+                    ComputerName = this.ComputerName,
+                    HadErrors = true,
+                    Errors = new PSDataCollection<ErrorRecord>() {
+                        new ErrorRecord(
+                            new Exception($"Execution timeout with in {this.TimeoutInSeconds} second(s)"),
+                            string.Empty, ErrorCategory.OperationTimeout, null)
+                    },
+                    Results = null
+                };
             }
             catch (Exception e)
             {
-                psExecutionResult = new PSExecutionResult()
+                return new PSExecutionResult()
+                {
+                    ComputerName = this.ComputerName,
+                    HadErrors = true,
+                    Errors = new PSDataCollection<ErrorRecord>() {
+                        new ErrorRecord(
+                            new Exception($"{e.InnerException.Message}"),
+                            string.Empty, ErrorCategory.NotSpecified, null)
+                    },
+                    Results = null
+                };
+            }
+            finally
+            {
+                cts.Dispose();
+                if (task.Status == TaskStatus.RanToCompletion)
+                    task.Dispose();
+                task = null;
+                cts = null;
+            }
+        }
+        #endregion
+
+        #region Private methods
+        private PSExecutionResult IgnitePowerShellInvocation()
+        {
+            PSRuntimeEnvironment psRuntimeEnvironment = new PSRuntimeEnvironment(this);
+            PSExecutionResult psExecutionResult_temp = new PSExecutionResult()
+            {
+                ComputerName = this.ComputerName,
+                HadErrors = false,
+                Results = null,
+                Errors = null
+            };
+            try
+            {
+                var result = psRuntimeEnvironment.PowerShell.Invoke();
+
+                //If the executed code is just a command then the PowerShell.Invoke() method throws an exception but
+                //if the code is a script and contains any errors then it will not indicate anyway about the exceptions.
+                //Hence we the logic is around HadErrors property data.
+                if (psRuntimeEnvironment.PowerShell.HadErrors)
+                {
+                    psExecutionResult_temp.HadErrors = true;
+                    psExecutionResult_temp.Errors = psRuntimeEnvironment.PowerShell.Streams.Error;
+                    psExecutionResult_temp.Results = null;
+                }
+                else
+                {
+                    psExecutionResult_temp.Results = result;
+                }
+                psExecutionResult_temp = (PSExecutionResult)psExecutionResult_temp.Clone(); //Deep cloning
+            }
+            catch (Exception e)
+            {
+                psExecutionResult_temp = new PSExecutionResult()
                 {
                     ComputerName = this.ComputerName,
                     HadErrors = true,
@@ -76,11 +129,13 @@ namespace Organization.PowerSharp
                     Results = null
                 };
             }
-            return psExecutionResult;
-        }
-        public async Task<PSExecutionResult> InvokeAsync()
-        {
-            return await Task.Run(new Func<PSExecutionResult>(this.Invoke));
+            finally
+            {
+                psRuntimeEnvironment.PowerShell.Dispose();
+                psRuntimeEnvironment.Dispose();
+                psRuntimeEnvironment = null;
+            }
+            return psExecutionResult_temp;
         }
         #endregion
     }
@@ -127,38 +182,16 @@ namespace Organization.PowerSharp
         {
             if (this.IsLocalComputer)
             {
-                var rrsp = RunspaceFactory.CreateRunspace(InitialSessionState.CreateDefault());
-                return rrsp;
+                return RunspaceFactory.CreateRunspace(InitialSessionState.CreateDefault());
             }
             else
             {
-                WSManConnectionInfo conInfo = NewWSManConnection(this.ComputerName, openTimeoutInMilliseconds);
-                var rrsp = RunspaceFactory.CreateRunspace(conInfo);
-                rrsp.InitialSessionState.Formats.Clear();
-                return rrsp;
+                return RunspaceFactory.CreateRunspace(NewWSManConnection(this.ComputerName, openTimeoutInMilliseconds));
             }
         }
         private WSManConnectionInfo NewWSManConnection(string computerName, int sessionOpenTimeoutInMilliSeconds, int port = 5985)
         {
-            Uri remoteComputerUri = new Uri($"http://{computerName}:{port}/WSMAN");
-            var conInfo = new WSManConnectionInfo(remoteComputerUri);
-
-            conInfo.OpenTimeout = sessionOpenTimeoutInMilliSeconds;
-            return conInfo;
-        }
-        private void AddModulePaths(List<FileInfo> modulesTobeImported, ref Runspace runspace)
-        {
-            if (modulesTobeImported != null)
-            {
-                foreach (var path in modulesTobeImported)
-                {
-                    if (path != null)
-                        if (File.Exists(path.ToString()))
-                            runspace.InitialSessionState.ImportPSModulesFromPath(path.ToString());
-                        else
-                            throw new FileNotFoundException($"The file {path.ToString()} not found");
-                }
-            }
+            return new WSManConnectionInfo(new Uri($"http://{computerName}:{port}/WSMAN")) { OpenTimeout = sessionOpenTimeoutInMilliSeconds };
         }
         #endregion
 
@@ -205,18 +238,21 @@ namespace Organization.PowerSharp
 
     public class PowerShell
     {
+        public event NotifyCollectionChangedEventHandler InvokcationCompleted;
         #region Public properties
         public List<string> ComputerNames { get; }
         public string Code { get; }
         public CodeType CodeType { get; }
         public Dictionary<string, object> Parameters { get; }
         public List<FileInfo> ModulesTobeImported { get; }
-        public int TimeoutInSeconds { get; }
+        public uint TimeoutInSeconds { get; }
+
         private Hashtable parmeters;
+        Random lockObject = new Random();
         #endregion
 
         #region Constructor
-        public PowerShell(List<string> computernames, string code, CodeType codeType, Hashtable parameters, List<FileInfo> modulesTobeImported, int timeoutInSeconds = 30)
+        public PowerShell(List<string> computernames, string code, CodeType codeType, Hashtable parameters, List<FileInfo> modulesTobeImported, uint timeoutInSeconds = 30)
         {
             this.ComputerNames = computernames;
             this.Code = code;
@@ -230,54 +266,29 @@ namespace Organization.PowerSharp
         #endregion
 
         #region Public methods
-        public IEnumerable<PSExecutionResult> BeginInvoke()
+        public ObservableCollection<PSExecutionResult> BeginInvoke()
         {
-            ConcurrentBag<PSExecutionResult> psExecutionResults = new ConcurrentBag<PSExecutionResult>();
-
-
+            ObservableCollection<PSExecutionResult> results = new ObservableCollection<PSExecutionResult>();
+            results.CollectionChanged += InvokcationCompleted;
             ParallelOptions po = new ParallelOptions();
             po.MaxDegreeOfParallelism = Environment.ProcessorCount;
 
-            Parallel.ForEach<PSCode>(CreatePSCodeObjectsList(), po, psCode =>
-            {
-                var cts = new CancellationTokenSource();
-                var ctsToken = cts.Token;
-                Task task = Task.Factory.StartNew(() =>
+            Parallel.ForEach<PSCode>(CreatePSCodeObjectsList(), po, psCode => {
+                lock (lockObject)
                 {
-                    psExecutionResults.Add(psCode.Invoke());
-                });
-                var cancelTimer = new Timer(state =>
-                {
-                    psExecutionResults.Add(new PSExecutionResult()
-                    {
-                        ComputerName = psCode.ComputerName,
-                        HadErrors = true,
-                        Errors = new PSDataCollection<ErrorRecord>() {
-                            new ErrorRecord(
-                                new Exception($"Execution timeout with in {this.TimeoutInSeconds} second(s)"),
-                                string.Empty, ErrorCategory.OperationTimeout, null)
-                        },
-                        Results = null
-                    });
-                    cts.Cancel();
+                    results.Add(psCode.Invoke());
                 }
-                , null, this.TimeoutInSeconds * 1000, -1);
-                task.ContinueWith(t =>
-                {
-                    cancelTimer.Dispose();
-                    cts.Dispose();
-                });
-                var winner = Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(this.TimeoutInSeconds)));
-                winner.Wait();
             });
-            return psExecutionResults;
+            return results;
         }
+        #endregion
 
+        #region Private methods
         private IEnumerable<PSCode> CreatePSCodeObjectsList()
         {
             foreach (var computer in ComputerNames)
             {
-                yield return (new PSCode(computer, this.Code, this.CodeType, this.parmeters, this.ModulesTobeImported));
+                yield return (new PSCode(computer, this.Code, this.CodeType, this.parmeters, this.ModulesTobeImported, this.TimeoutInSeconds));
             }
         }
         #endregion
@@ -287,10 +298,18 @@ namespace Organization.PowerSharp
     {
         static void Main(string[] args)
         {
-            var ps = new PowerSharp.PowerShell(new List<string>() { "mslaptop", "dc1" }, "get-service", CodeType.Script, null, null, 1);
-            var b = ps.BeginInvoke();
+            var ps = new PowerSharp.PowerShell(new List<string>() { "mslaptop", "dc1", }, "get-service", CodeType.Script, null, null, 1);
+            ps.InvokcationCompleted += Ps_WhenInvokcationCompleted;
+            ps.BeginInvoke();
+
             Console.WriteLine("All done");
             Console.ReadKey();
+        }
+
+        private static void Ps_WhenInvokcationCompleted(object sender, NotifyCollectionChangedEventArgs e)
+        {
+            var b = e.NewItems;
+            Console.WriteLine("Sagar");
         }
     }
 }
