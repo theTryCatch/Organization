@@ -238,7 +238,6 @@ namespace Organization.PowerSharp
 
     public class PowerShell
     {
-        public event NotifyCollectionChangedEventHandler InvokcationCompleted;
         #region Public properties
         public List<string> ComputerNames { get; }
         public string Code { get; }
@@ -246,13 +245,16 @@ namespace Organization.PowerSharp
         public Dictionary<string, object> Parameters { get; }
         public List<FileInfo> ModulesTobeImported { get; }
         public uint TimeoutInSeconds { get; }
+        public uint Throttle { get; }
 
         private Hashtable parmeters;
         Random lockObject = new Random();
+        ParallelOptions po = new ParallelOptions();
+        ObservableCollection<PSExecutionResult> results = new ObservableCollection<PSExecutionResult>();
         #endregion
 
         #region Constructor
-        public PowerShell(List<string> computernames, string code, CodeType codeType, Hashtable parameters, List<FileInfo> modulesTobeImported, uint timeoutInSeconds = 30)
+        public PowerShell(List<string> computernames, string code, CodeType codeType, Hashtable parameters, List<FileInfo> modulesTobeImported, uint timeoutInSeconds = 30, uint throttle = 4)
         {
             this.ComputerNames = computernames;
             this.Code = code;
@@ -260,6 +262,7 @@ namespace Organization.PowerSharp
             this.Parameters = parameters != null ? CSharpConverters.HashtableToDictionary<string, object>(parameters) : null;
             this.ModulesTobeImported = modulesTobeImported;
             this.TimeoutInSeconds = timeoutInSeconds;
+            this.Throttle = throttle;
 
             this.parmeters = parameters;
         }
@@ -268,18 +271,29 @@ namespace Organization.PowerSharp
         #region Public methods
         public ObservableCollection<PSExecutionResult> BeginInvoke()
         {
-            ObservableCollection<PSExecutionResult> results = new ObservableCollection<PSExecutionResult>();
-            results.CollectionChanged += InvokcationCompleted;
-            ParallelOptions po = new ParallelOptions();
-            po.MaxDegreeOfParallelism = Environment.ProcessorCount;
-
-            Parallel.ForEach<PSCode>(CreatePSCodeObjectsList(), po, psCode => {
+            po.MaxDegreeOfParallelism = (int)this.Throttle;
+            Parallel.ForEach<PSCode>(CreatePSCodeObjectsList(), po, psCode =>
+            {
+                var res = psCode.Invoke();
                 lock (lockObject)
                 {
-                    results.Add(psCode.Invoke());
+                    results.Add(res);
                 }
             });
             return results;
+        }
+        public void BeginInvoke(NotifyCollectionChangedEventHandler onEveryPSExecutionComplete)
+        {
+            po.MaxDegreeOfParallelism = (int)this.Throttle;
+            results.CollectionChanged += onEveryPSExecutionComplete;
+            Parallel.ForEach<PSCode>(CreatePSCodeObjectsList(), po, psCode =>
+            {
+                var res = psCode.Invoke();
+                lock (lockObject)
+                {
+                    results.Add(res);
+                }
+            });
         }
         #endregion
 
@@ -292,24 +306,5 @@ namespace Organization.PowerSharp
             }
         }
         #endregion
-    }
-
-    public class Program
-    {
-        static void Main(string[] args)
-        {
-            var ps = new PowerSharp.PowerShell(new List<string>() { "mslaptop", "dc1", }, "get-service", CodeType.Script, null, null, 1);
-            ps.InvokcationCompleted += Ps_WhenInvokcationCompleted;
-            ps.BeginInvoke();
-
-            Console.WriteLine("All done");
-            Console.ReadKey();
-        }
-
-        private static void Ps_WhenInvokcationCompleted(object sender, NotifyCollectionChangedEventArgs e)
-        {
-            var b = e.NewItems;
-            Console.WriteLine("Sagar");
-        }
     }
 }
