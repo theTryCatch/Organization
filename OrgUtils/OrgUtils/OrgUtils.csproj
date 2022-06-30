@@ -5,7 +5,7 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{9A78456D-1F44-4FF1-9150-CDB6B4574BCA}</ProjectGuid>
-    <OutputType>Exe</OutputType>
+    <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>OrgUtils</RootNamespace>
     <AssemblyName>OrgUtils</AssemblyName>
@@ -55,6 +55,7 @@
     <Compile Include="PowerSharp\CodeTypes.cs" />
     <Compile Include="PowerSharp\HashtablToDictionary.cs" />
     <Compile Include="PowerSharp\PSCode.cs" />
+    <Compile Include="PowerSharp\UsingRSPool.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup />

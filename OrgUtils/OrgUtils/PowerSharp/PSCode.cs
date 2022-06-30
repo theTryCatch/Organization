@@ -1,11 +1,8 @@
 ﻿using System;
-using System.Collections;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.IO;
-using System.Linq;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Runtime.Serialization.Formatters.Binary;
@@ -26,12 +23,12 @@ namespace Organization.PowerSharp
         #endregion
 
         #region Constructor
-        public PSCode(string computername, string code, CodeType codeType, Hashtable parameters, List<FileInfo> modulesTobeImported, uint timeoutInSeconds)
+        public PSCode(string computername, string code, CodeType codeType, Dictionary<string, object> parameters, List<FileInfo> modulesTobeImported, uint timeoutInSeconds)
         {
             this.ComputerName = computername;
             this.Code = code;
             this.CodeType = codeType;
-            this.Parameters = parameters != null ? CSharpConverters.HashtableToDictionary<string, object>(parameters) : null;
+            this.Parameters = parameters;
             this.ModulesTobeImported = modulesTobeImported;
             this.TimeoutInSeconds = timeoutInSeconds;
         }
@@ -117,7 +114,6 @@ namespace Organization.PowerSharp
                 {
                     psExecutionResult_temp.Results = result;
                 }
-                psExecutionResult_temp = (PSExecutionResult)psExecutionResult_temp.Clone(); //Deep cloning
             }
             catch (Exception e)
             {
@@ -186,12 +182,8 @@ namespace Organization.PowerSharp
             }
             else
             {
-                return RunspaceFactory.CreateRunspace(NewWSManConnection(this.ComputerName, openTimeoutInMilliseconds));
+                return RunspaceFactory.CreateRunspace(new WSManConnectionInfo(new Uri($"http://{this.ComputerName}:{5985}/WSMAN")) { OpenTimeout = openTimeoutInMilliseconds });
             }
-        }
-        private WSManConnectionInfo NewWSManConnection(string computerName, int sessionOpenTimeoutInMilliSeconds, int port = 5985)
-        {
-            return new WSManConnectionInfo(new Uri($"http://{computerName}:{port}/WSMAN")) { OpenTimeout = sessionOpenTimeoutInMilliSeconds };
         }
         #endregion
 
@@ -207,32 +199,13 @@ namespace Organization.PowerSharp
         #endregion
     }
 
-    [Serializable]
-    public class PSExecutionResult : ICloneable
+    public class PSExecutionResult
     {
         #region Public properties
         public string ComputerName { get; set; }
         public object Results { get; set; }
         public bool HadErrors { get; set; }
         public PSDataCollection<ErrorRecord> Errors { get; set; }
-        #endregion
-
-        #region Interface implementations
-        //Deep cloning
-        public object Clone()
-        {
-            using (MemoryStream stream = new MemoryStream())
-            {
-                if (this.GetType().IsSerializable)
-                {
-                    BinaryFormatter formatter = new BinaryFormatter();
-                    formatter.Serialize(stream, this);
-                    stream.Position = 0;
-                    return formatter.Deserialize(stream);
-                }
-                return null;
-            }
-        }
         #endregion
     }
 
@@ -245,34 +218,31 @@ namespace Organization.PowerSharp
         public Dictionary<string, object> Parameters { get; }
         public List<FileInfo> ModulesTobeImported { get; }
         public uint TimeoutInSeconds { get; }
-        public uint Throttle { get; }
-
-        private Hashtable parmeters;
-        Random lockObject = new Random();
-        ParallelOptions po = new ParallelOptions();
-        ObservableCollection<PSExecutionResult> results = new ObservableCollection<PSExecutionResult>();
+        public int Throttle { get; }        
         #endregion
 
         #region Constructor
-        public PowerShell(List<string> computernames, string code, CodeType codeType, Hashtable parameters, List<FileInfo> modulesTobeImported, uint timeoutInSeconds = 30, uint throttle = 4)
+        public PowerShell(List<string> computernames, string code, CodeType codeType, Dictionary<string, object> parameters, List<FileInfo> modulesTobeImported, uint timeoutInSeconds = 30, int throttle = 4)
         {
             this.ComputerNames = computernames;
             this.Code = code;
             this.CodeType = codeType;
-            this.Parameters = parameters != null ? CSharpConverters.HashtableToDictionary<string, object>(parameters) : null;
+            this.Parameters = parameters;
             this.ModulesTobeImported = modulesTobeImported;
             this.TimeoutInSeconds = timeoutInSeconds;
             this.Throttle = throttle;
-
-            this.parmeters = parameters;
         }
         #endregion
 
         #region Public methods
         public ObservableCollection<PSExecutionResult> BeginInvoke()
         {
-            po.MaxDegreeOfParallelism = (int)this.Throttle;
-            Parallel.ForEach<PSCode>(CreatePSCodeObjectsList(), po, psCode =>
+            Random lockObject = new Random();
+            ParallelOptions po = new ParallelOptions();
+            ObservableCollection<PSExecutionResult> results = new ObservableCollection<PSExecutionResult>();
+            po.MaxDegreeOfParallelism = this.Throttle;
+            var psCodeObjects = CreatePSCodeObjectsList();
+            Parallel.ForEach<PSCode>(psCodeObjects, po, psCode =>
             {
                 var res = psCode.Invoke();
                 lock (lockObject)
@@ -280,21 +250,25 @@ namespace Organization.PowerSharp
                     results.Add(res);
                 }
             });
+            psCodeObjects = null;
             return results;
         }
-        public void BeginInvoke(NotifyCollectionChangedEventHandler onEveryPSExecutionComplete)
-        {
-            po.MaxDegreeOfParallelism = (int)this.Throttle;
-            results.CollectionChanged += onEveryPSExecutionComplete;
-            Parallel.ForEach<PSCode>(CreatePSCodeObjectsList(), po, psCode =>
-            {
-                var res = psCode.Invoke();
-                lock (lockObject)
-                {
-                    results.Add(res);
-                }
-            });
-        }
+        //public void BeginInvoke(NotifyCollectionChangedEventHandler onEveryPSExecutionComplete)
+        //{
+        //    Random lockObject = new Random();
+        //    ParallelOptions po = new ParallelOptions();
+        //    ObservableCollection<PSExecutionResult> results = new ObservableCollection<PSExecutionResult>();
+        //    po.MaxDegreeOfParallelism = this.Throttle;
+        //    results.CollectionChanged += onEveryPSExecutionComplete;
+        //    Parallel.ForEach<PSCode>(CreatePSCodeObjectsList(), po, psCode =>
+        //    {
+        //        var res = psCode.Invoke();
+        //        lock (lockObject)
+        //        {
+        //            results.Add(res);
+        //        }
+        //    });
+        //}
         #endregion
 
         #region Private methods
@@ -302,9 +276,18 @@ namespace Organization.PowerSharp
         {
             foreach (var computer in ComputerNames)
             {
-                yield return (new PSCode(computer, this.Code, this.CodeType, this.parmeters, this.ModulesTobeImported, this.TimeoutInSeconds));
+                yield return (new PSCode(computer, this.Code, this.CodeType, this.Parameters, this.ModulesTobeImported, this.TimeoutInSeconds));
             }
         }
         #endregion
+    }
+    public class MyClass
+    {
+        public static void Main()
+        {
+            var a = new PowerSharp.PowerShell(new List<string>() { "mslaptop", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj", "dc1", "asdlkfj", "mslaptop", "dc1", "asdlkfj" }, "get-service", CodeType.Cmdlet, null, null);
+            var b = a.BeginInvoke();
+            Console.Read();
+        }
     }
 }
