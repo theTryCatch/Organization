@@ -37,99 +37,93 @@ namespace Organization.PowerSharp
         #region Public methods
         public PSExecutionResult Invoke()
         {
-            CancellationTokenSource cts = new CancellationTokenSource();
-            Task<PSExecutionResult> task = null;
-            try
+            PSExecutionResult result = null;
+            using (CancellationTokenSource cts = new CancellationTokenSource())
             {
                 Func<PSExecutionResult> func = new Func<PSExecutionResult>(IgnitePowerShellInvocation);
                 cts.CancelAfter(TimeSpan.FromSeconds(TimeoutInSeconds));
-                task = Task.Run(func, cts.Token);
-                task.Wait(cts.Token);
-                return task.Result;
-            }
-            catch (OperationCanceledException)
-            {
-                return new PSExecutionResult()
+                Task<PSExecutionResult> task = null;
+                try
                 {
-                    ComputerName = this.ComputerName,
-                    HadErrors = true,
-                    Errors = new PSDataCollection<ErrorRecord>() {
-                        new ErrorRecord(
-                            new Exception($"Execution timeout with in {this.TimeoutInSeconds} second(s)"),
-                            string.Empty, ErrorCategory.OperationTimeout, null)
-                    },
-                    Results = null
-                };
-            }
-            catch (Exception e)
-            {
-                return new PSExecutionResult()
+                    task = Task.Run(func, cts.Token);
+                    task.Wait(cts.Token);
+                    result = task.Result;
+                }
+                catch (OperationCanceledException)
                 {
-                    ComputerName = this.ComputerName,
-                    HadErrors = true,
-                    Errors = new PSDataCollection<ErrorRecord>() {
-                        new ErrorRecord(
-                            new Exception($"{e.InnerException.Message}"),
-                            string.Empty, ErrorCategory.NotSpecified, null)
-                    },
-                    Results = null
-                };
+                    result = new PSExecutionResult()
+                    {
+                        ComputerName = this.ComputerName,
+                        HadErrors = true,
+                        Errors = new PSDataCollection<ErrorRecord>() {
+                            new ErrorRecord(
+                                new Exception($"Execution timeout with in {this.TimeoutInSeconds} second(s)"),
+                                string.Empty, ErrorCategory.OperationTimeout, null)
+                        },
+                        Results = null
+                    };
+                }
+                catch (Exception e)
+                {
+                    result = new PSExecutionResult()
+                    {
+                        ComputerName = this.ComputerName,
+                        HadErrors = true,
+                        Errors = new PSDataCollection<ErrorRecord>() {
+                            new ErrorRecord(
+                                new Exception($"{e.InnerException.Message}"),
+                                string.Empty, ErrorCategory.NotSpecified, null)
+                        },
+                        Results = null
+                    };
+                }
+                finally
+                {
+                    // to handle this case we are not enclosing task in using blocks
+                    if (task.Status == TaskStatus.RanToCompletion)
+                        task.Dispose();
+                }
             }
-            finally
-            {
-                cts.Dispose();
-                if (task.Status == TaskStatus.RanToCompletion)
-                    task.Dispose();
-                task = null;
-                cts = null;
-            }
+            return result;
         }
         #endregion
 
         #region Private methods
         private PSExecutionResult IgnitePowerShellInvocation()
         {
-            PSRuntimeEnvironment psRuntimeEnvironment = new PSRuntimeEnvironment(this);
-            PSExecutionResult psExecutionResult_temp = new PSExecutionResult()
-            {
-                ComputerName = this.ComputerName,
-                HadErrors = false,
-                Results = null,
-                Errors = null
-            };
-            try
-            {
-                var result = psRuntimeEnvironment.PowerShell.Invoke();
+            PSExecutionResult psExecutionResult_temp = null;
 
-                //If the executed code is just a command then the PowerShell.Invoke() method throws an exception but
-                //if the code is a script and contains any errors then it will not indicate anyway about the exceptions.
-                //Hence we the logic is around HadErrors property data.
-                if (psRuntimeEnvironment.PowerShell.HadErrors)
-                {
-                    psExecutionResult_temp.HadErrors = true;
-                    psExecutionResult_temp.Errors = psRuntimeEnvironment.PowerShell.Streams.Error;
-                    psExecutionResult_temp.Results = null;
-                }
-                else
-                {
-                    psExecutionResult_temp.Results = result;
-                }
-            }
-            catch (Exception e)
+            using (PSRuntimeEnvironment psRuntimeEnvironment = new PSRuntimeEnvironment(this))
             {
-                psExecutionResult_temp = new PSExecutionResult()
+                try
                 {
-                    ComputerName = this.ComputerName,
-                    HadErrors = true,
-                    Errors = new PSDataCollection<ErrorRecord>() { new ErrorRecord(e, string.Empty, ErrorCategory.OperationStopped, null) },
-                    Results = null
-                };
-            }
-            finally
-            {
-                psRuntimeEnvironment.PowerShell.Dispose();
-                psRuntimeEnvironment.Dispose();
-                psRuntimeEnvironment = null;
+                    using (psRuntimeEnvironment.PowerShell)
+                    {
+                        var result = psRuntimeEnvironment.PowerShell.Invoke();
+
+                        //If the executed code is just a command then the PowerShell.Invoke() method throws an exception but
+                        //if the code is a script and contains any errors then it will not indicate anyway about the exceptions.
+                        //Hence we the logic is around HadErrors property data.
+                        if (psRuntimeEnvironment.PowerShell.HadErrors)
+                        {
+                            psExecutionResult_temp = new PSExecutionResult() { ComputerName = this.ComputerName, HadErrors = true, Results = null, Errors = psRuntimeEnvironment.PowerShell.Streams.Error };
+                        }
+                        else
+                        {
+                            psExecutionResult_temp = new PSExecutionResult() { ComputerName = this.ComputerName, HadErrors = false, Results = result, Errors = null };
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    psExecutionResult_temp = new PSExecutionResult()
+                    {
+                        ComputerName = this.ComputerName,
+                        HadErrors = true,
+                        Errors = new PSDataCollection<ErrorRecord>() { new ErrorRecord(e, string.Empty, ErrorCategory.OperationStopped, null) },
+                        Results = null
+                    };
+                }
             }
             return psExecutionResult_temp;
         }
@@ -218,7 +212,7 @@ namespace Organization.PowerSharp
         public Dictionary<string, object> Parameters { get; }
         public List<FileInfo> ModulesTobeImported { get; }
         public uint TimeoutInSeconds { get; }
-        public int Throttle { get; }        
+        public int Throttle { get; }
         #endregion
 
         #region Constructor
