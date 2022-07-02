@@ -1,9 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
-using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,8 +24,6 @@ namespace OrgUtils.PowerSharp
         private Task<PSExecutionResult> _task { get; set; }
         private MSFT.PowerShell _powershell { get; set; }
         private Runspace _runspace { get; set; }
-        private List<string> _errors { get; set; } = new List<string>();
-        private Collection<PSObject> _results { get; set; }
 
         #endregion
 
@@ -85,7 +81,9 @@ namespace OrgUtils.PowerSharp
         #region Public methods
         public PSExecutionResult Invoke()
         {
-            PSExecutionResult result = null;
+            PSExecutionResult _executionResults;
+            List<string> _errors = new List<string>();
+
             Func<PSExecutionResult> func = new Func<PSExecutionResult>(IgnitePowerShellInvocation);
             using (this._task)
             {
@@ -95,28 +93,28 @@ namespace OrgUtils.PowerSharp
                     {
                         this._task = Task.Run(func, this._cts.Token);
                         this._task.Wait(this._cts.Token);
-                        result = this._task.Result;
+                        _executionResults = this._task.Result;
                     }
                     catch (OperationCanceledException)
                     {
-                        this._errors.Add($"Execution timeout with in {this.TimeoutInSeconds} second(s)");
-                        this._results = null;
+                        _errors.Add($"Execution timeout with in {this.TimeoutInSeconds} second(s)");
+                        _executionResults = null;
                         return new PSExecutionResult()
                         {
                             ComputerName = this.ComputerName,
-                            Errors = this._errors,
+                            Errors = _errors,
                             HadErrors = true,
                             Results = null
                         };
                     }
                     catch (Exception e)
                     {
-                        this._errors.Add(e.ToString());
-                        this._results = null;
+                        _errors.Add(e.ToString());
+                        _executionResults = null;
                         return new PSExecutionResult()
                         {
                             ComputerName = this.ComputerName,
-                            Errors = this._errors,
+                            Errors = _errors,
                             HadErrors = true,
                             Results = null
                         };
@@ -125,13 +123,15 @@ namespace OrgUtils.PowerSharp
                 this._cts = null;
             }
             this._task = null;
-            return result;
+            return _executionResults;
         }
         #endregion
 
         #region Private methods
         private PSExecutionResult IgnitePowerShellInvocation()
         {
+            PSExecutionResult _executionResults;
+            List<string> _errors = new List<string>();
             try
             {
                 using (this._powershell)
@@ -148,12 +148,25 @@ namespace OrgUtils.PowerSharp
                         {
                             foreach (var item in (from error in this._powershell.Streams.Error select error.ToString()))
                             {
-                                this._errors.Add(item);
+                                _errors.Add(item);
                             }
+                            _executionResults = new PSExecutionResult()
+                            {
+                                ComputerName = this.ComputerName,
+                                HadErrors = true,
+                                Results = null,
+                                Errors = _errors
+                            };
                         }
                         else
                         {
-                            this._results = result;
+                            _executionResults = new PSExecutionResult()
+                            {
+                                ComputerName = this.ComputerName,
+                                HadErrors = false,
+                                Results = result,
+                                Errors = null
+                            };
                         }
                     }
                     this._runspace = null;
@@ -162,29 +175,16 @@ namespace OrgUtils.PowerSharp
             }
             catch (Exception e)
             {
-                this._errors.Add(e.ToString());
-                this._results = null;
-            }
-            if (this._errors.Count > 0)
-            {
-                return new PSExecutionResult()
+                _errors.Add(e.ToString());
+                _executionResults = new PSExecutionResult()
                 {
                     ComputerName = this.ComputerName,
                     HadErrors = true,
                     Results = null,
-                    Errors = this._errors
+                    Errors = _errors
                 };
             }
-            else
-            {
-                return new PSExecutionResult()
-                {
-                    ComputerName = this.ComputerName,
-                    HadErrors = false,
-                    Results = this._results,
-                    Errors = null
-                };
-            }
+            return _executionResults;
         }
         #endregion
     }
