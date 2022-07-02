@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 
-namespace Organization.PowerSharp
+namespace OrgUtls.PowerSharp
 {
     public static class CSharpConverters
     {

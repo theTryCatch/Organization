@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Organization.LDAP
+namespace OrgUtls.LDAP
 {
     public class Filter
     {

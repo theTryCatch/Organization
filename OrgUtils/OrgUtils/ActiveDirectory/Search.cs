@@ -1,7 +1,7 @@
-﻿using Organization.LDAP;
+﻿using OrgUtls.LDAP;
 using System.DirectoryServices;
 
-namespace Organization.ActiveDirectory
+namespace OrgUtls.ActiveDirectory
 {
     public static class Search
     {
