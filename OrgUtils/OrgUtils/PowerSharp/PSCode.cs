@@ -10,7 +10,7 @@ using System.Threading.Tasks;
 using MSFT = System.Management.Automation;
 namespace OrgUtils.PowerSharp
 {
-    public sealed class PSCode : IDisposable
+    public sealed class PSCode
     {
         #region Properties
         public string ComputerName { get; }
@@ -185,17 +185,6 @@ namespace OrgUtils.PowerSharp
                     Errors = null
                 };
             }
-        }
-        #endregion
-
-        #region Interface implementation
-        public void Dispose()
-        {
-            if(this._errors != null)
-                this._errors.Clear();
-
-            if (this._results != null)
-                this._results.Clear();
         }
         #endregion
     }
