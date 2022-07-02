@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.IO;
 using System.Threading.Tasks;
 
@@ -49,6 +50,25 @@ namespace OrgUtils.PowerSharp
             var lockObject = this;
             ParallelOptions po = new ParallelOptions();
             ObservableCollection<PSExecutionResult> results = new ObservableCollection<PSExecutionResult>();
+            po.MaxDegreeOfParallelism = this.Throttle;
+            var psCodeObjects = CreatePSCodeObjectsList();
+            Parallel.ForEach<PSCode>(psCodeObjects, po, psCode =>
+            {
+                var res = psCode.Invoke();
+                lock (lockObject)
+                {
+                    results.Add(res);
+                }
+            });
+            psCodeObjects = null;
+            return results;
+        }
+        public ObservableCollection<PSExecutionResult> BeginInvoke(NotifyCollectionChangedEventHandler ExecutionCompleted)
+        {
+            var lockObject = this;
+            ParallelOptions po = new ParallelOptions();
+            ObservableCollection<PSExecutionResult> results = new ObservableCollection<PSExecutionResult>();
+            results.CollectionChanged += ExecutionCompleted;
             po.MaxDegreeOfParallelism = this.Throttle;
             var psCodeObjects = CreatePSCodeObjectsList();
             Parallel.ForEach<PSCode>(psCodeObjects, po, psCode =>
