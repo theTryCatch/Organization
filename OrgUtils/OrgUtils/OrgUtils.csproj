@@ -53,9 +53,12 @@
     <Compile Include="ActiveDirectory\Search.cs" />
     <Compile Include="LDAP\Filter.cs" />
     <Compile Include="PowerSharp\CodeTypes.cs" />
-    <Compile Include="PowerSharp\HashtablToDictionary.cs" />
+    <Compile Include="PowerSharp\CSharpConverters.cs" />
+    <Compile Include="PowerSharp\PowerShell.cs" />
+    <Compile Include="PowerSharp\program.cs" />
+    <Compile Include="PowerSharp\working versions\PSCode.cs" />
     <Compile Include="PowerSharp\PSCode.cs" />
-    <Compile Include="PowerSharp\UsingRSPool.cs" />
+    <Compile Include="PowerSharp\PSExecutionResult.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup />

@@ -1,4 +1,4 @@
-﻿namespace Organization.PowerSharp
+﻿namespace OrgUtils.PowerSharp
 {
     public enum CodeType
     {
