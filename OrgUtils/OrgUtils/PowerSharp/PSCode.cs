@@ -8,9 +8,15 @@ using System.Threading.Tasks;
 using MSFT = System.Management.Automation;
 namespace OrgUtils.PowerSharp
 {
-    public sealed class PSCode
+    public class PSCode
     {
         #region Properties
+        /// <summary>
+        /// PSCode enables you to run any PowerShell command, script on a local or remote machine with timeout feature.
+        /// </summary>
+        /// <remarks>
+        /// This class implements PowerShell runspaces for execution and TPL (Task) for timeout feature.
+        /// </remarks>
         public string ComputerName { get; }
         public string Code { get; }
         public CodeType CodeType { get; }
@@ -28,6 +34,15 @@ namespace OrgUtils.PowerSharp
         #endregion
 
         #region Constructor
+        /// <summary>
+        /// Construct a new <c>PSCode</c>instance
+        /// </summary>
+        /// <param name="computername">Target computer name</param>
+        /// <param name="code">PowerShell code (cmdlet, script, script file path)</param>
+        /// <param name="codeType">What type of 'code' you provided?</param>
+        /// <param name="parameters">specify list of parameters for the PowerShell 'code'</param>
+        /// <param name="modulesTobeImported">Provide list of modules you wanted to import into the PowerShell environment.</param>
+        /// <param name="timeoutInSeconds">Specify the timeout in seconds. Defaults to 30 seconds</param>
         public PSCode(
             string computername,
             string code, CodeType codeType,
@@ -79,6 +94,10 @@ namespace OrgUtils.PowerSharp
         #endregion
 
         #region Public methods
+        /// <summary>
+        /// This method invokes PowerShell synchronously and time out the execution based on the provided <see cref="TimeoutInSeconds"/> parameter.
+        /// </summary>
+        /// <remarks>This method is never expected to throw any errors</remarks>
         public PSExecutionResult Invoke()
         {
             PSExecutionResult _executionResults;
