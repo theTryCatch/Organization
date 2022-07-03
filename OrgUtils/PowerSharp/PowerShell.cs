@@ -1,12 +1,7 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Collections.Specialized;
-using System.IO;
-using System.Threading.Tasks;
 
-namespace OrgUtils.PowerSharp
+namespace Organization.PowerSharp
 {
     public class PowerShell
     {

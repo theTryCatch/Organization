@@ -1,12 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Management.Automation.Runspaces;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using System.Management.Automation.Runspaces;
 using MSFT = System.Management.Automation;
-namespace OrgUtils.PowerSharp
+namespace Organization.PowerSharp
 {
     public class PSCode
     {
@@ -26,10 +20,10 @@ namespace OrgUtils.PowerSharp
 
 
 
-        private CancellationTokenSource _cts { get; set; }
-        private Task<PSExecutionResult> _task { get; set; }
-        private MSFT.PowerShell _powershell { get; set; }
-        private Runspace _runspace { get; set; }
+        private CancellationTokenSource? _cts { get; set; }
+        private Task<PSExecutionResult>? _task { get; set; }
+        private MSFT.PowerShell? _powershell { get; set; }
+        private Runspace? _runspace { get; set; }
 
         #endregion
 
@@ -100,7 +94,7 @@ namespace OrgUtils.PowerSharp
         /// <remarks>This method is never expected to throw any errors</remarks>
         public PSExecutionResult Invoke()
         {
-            PSExecutionResult _executionResults;
+            PSExecutionResult? _executionResults;
             List<string> _errors = new List<string>();
 
             Func<PSExecutionResult> func = new Func<PSExecutionResult>(IgnitePowerShellInvocation);
@@ -165,7 +159,7 @@ namespace OrgUtils.PowerSharp
                         //Hence we the logic is around HadErrors property data.
                         if (this._powershell.HadErrors)
                         {
-                            foreach (var item in (from error in this._powershell.Streams.Error select error.ToString()))
+                            foreach (var item in (from error in this._powershell.Streams.Error select error.Exception.Message))
                             {
                                 _errors.Add(item);
                             }
